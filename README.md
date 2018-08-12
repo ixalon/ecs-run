@@ -1,10 +1,10 @@
 # ecs-run
 
-This utility allows you to run an arbitrary command in a container on an ECS cluster. It is similar to the aws-cli command `aws ecs run-task` however with a number of benefits:
+This utility allows you to run an arbitrary command in a container on an ECS cluster. It is similar to the aws-cli command [`aws ecs run-task`](https://docs.aws.amazon.com/cli/latest/reference/ecs/run-task.html) however with a number of benefits:
 
 * Can wait for the ECS task to finish before exiting
 * Exits with the exit code of the command which was run in the container
-* Can stream the output from the command (if the container uses AWS Cloudwatch logging)
+* Can stream the output from the command (if the container uses [AWS Cloudwatch logging driver](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/using_awslogs.html))
 * Can override placement requirements (CPU and memory) of both the container to run the task in and other containers in the task definition
 * Doesn't require a JSON object to be constructed and passed on the command line for such overrides (making it easier to use in some CI/CD systems)
 
