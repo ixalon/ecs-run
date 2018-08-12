@@ -1,0 +1,209 @@
+#!/usr/bin/env python
+
+from __future__ import print_function
+from retrying import retry
+import argh
+import boto3
+import sys
+
+def eprint(*args, **kwargs):
+	print(*args, file=sys.stderr, **kwargs)
+
+def filter(d): return {k: v for k, v in d.iteritems() if v is not None}
+
+@argh.arg('--cluster',
+          dest='ECS_CLUSTER',
+          help='Name of ECS cluster to run the task')
+@argh.arg('--task-definition',
+          dest='ECS_TASK_DEF',
+          help='Task definition to run')
+@argh.arg('--region',
+          dest='AWS_REGION',
+          metavar='AWS_REGION',
+          help='AWS region in which the ECS cluster resides')
+@argh.arg('--profile',
+          dest='AWS_PROFILE',
+          metavar='AWS_PROFILE',
+          help='AWS profile to use')
+@argh.arg('--count',
+          dest='TASK_COUNT',
+          type=int,
+          help='Number of instances of the task to start',
+          default=1)
+@argh.arg('--started-by',
+          dest='TASK_STARTED_BY',
+          default='ecs-run-task',
+          help='Tag to pass to AWS to identify what started the task')
+@argh.arg('--cmd-container',
+          dest='CMD_CONTAINER',
+          help='Which container to run the command in')
+@argh.arg('--cmd-container-cpu',
+          dest='CMD_CONTAINER_CPU',
+          type=int,
+          help='Required CPU unit reservation for the command container')
+@argh.arg('--cmd-container-memory-reservation',
+          dest='CMD_CONTAINER_MEMORY_RESERVATION',
+          type=int,
+          help='Required memory reservation for the command container reservation (MB)')
+@argh.arg('--cmd-container-memory-limit',
+          dest='CMD_CONTAINER_MEMORY_LIMIT',
+          help='Memory limit for command container - will be killed if exceeds this (MB)')
+@argh.arg('--other-container-cpu',
+          dest='OTHER_CONTAINER_CPU',
+          type=int,
+          help='Required CPU unit reservation for other containers')
+@argh.arg('--other-container-memory-reservation',
+          dest='OTHER_CONTAINER_MEMORY_RESERVATION',
+          type=int,
+          help='Required memory reservation for other containers (MB)')
+@argh.arg('--other-container-memory-limit',
+          dest='OTHER_CONTAINER_MEMORY_LIMIT',
+          type=int,
+          help='Memory limit for other containers - will be killed if exceed this (MB)')
+@argh.arg('--wait',
+          dest='WAIT',
+          default=False,
+          action='store_true',
+          help='Wait for command to exit')
+@argh.arg('--timeout',
+          dest='TIMEOUT',
+          default=0,
+          type=int,
+          help='Timeout (in seconds) when --wait or --logs is specified. Zero to wait indefinitely (default).')
+@argh.arg('--logs',
+          dest='LOGS',
+          default=False,
+          action='store_true',
+          help='Stream cloudwatch log output from command (implies --wait)')
+@argh.arg('--quiet',
+          dest='QUIET',
+          default=False,
+          action='store_true',
+          help='Do not output periodicadlly to stderr whilst the process is running')
+@argh.arg('COMMAND',
+          nargs='*',
+          metavar='COMMAND',
+          help='Command to run')
+
+def run_task(**kwargs):
+	"Runs an arbitrary command in a container on an ECS cluster. Optionally wait for it to finish and stream log output."
+
+	session = boto3.session.Session(profile_name=kwargs['AWS_PROFILE'], region_name=kwargs['AWS_REGION'])
+	client = session.client('ecs')
+	logs = session.client('logs')
+
+	def retry_if_not_stopped(task):
+		return task.get('lastStatus') != 'STOPPED'
+ 
+        @retry(retry_on_result=retry_if_not_stopped, wait_fixed=5000, stop_max_delay=((kwargs['TIMEOUT'] * 1000) or None))
+	def wait_until_stopped(task_arn, logOptions = None):
+		if not kwargs['QUIET']: sys.stderr.write('.')
+		results = client.describe_tasks(
+			cluster = kwargs['ECS_CLUSTER'],
+			tasks = [task_arn]
+		)
+		if logOptions is not None:
+			try:
+				logEntries = logs.filter_log_events(**logOptions)
+				startTime = None
+
+				for evt in logEntries.get('events', []):
+					print(evt.get('message', ''))
+					startTime = evt.get('timestamp')
+
+				if startTime is not None:
+					logOptions['startTime'] = startTime + 1
+			except:
+				pass
+	
+		return results.get('tasks')[0]
+
+	def get_override(container):
+		if container.get('name') == kwargs['CMD_CONTAINER']:
+			return filter({
+				'name': container.get('name'),
+				'command': kwargs['COMMAND'],
+				'cpu': kwargs['CMD_CONTAINER_CPU'],
+				'memory': kwargs['CMD_CONTAINER_MEMORY_LIMIT'],
+				'memoryReservation': kwargs['CMD_CONTAINER_MEMORY_RESERVATION']
+			})
+		else:
+			return filter({
+				'name': container.get('name'),
+				'cpu': kwargs['OTHER_CONTAINER_CPU'],
+				'memory': kwargs['OTHER_CONTAINER_MEMORY_LIMIT'],
+				'memoryReservation': kwargs['OTHER_CONTAINER_MEMORY_RESERVATION']
+			})
+
+	taskdef = client.describe_task_definition(
+		taskDefinition = kwargs['ECS_TASK_DEF']
+	)
+
+	containers = taskdef.get('taskDefinition', {}).get('containerDefinitions', [])
+
+	commandContainer = None
+	for container in containers:
+		if container.get('name') == kwargs['CMD_CONTAINER']:
+			commandContainer = container
+			break
+
+	if commandContainer is None:
+		eprint('[ERROR] Specified command container not found in task definition')
+		exit(-1)
+
+	logOptions = None
+	if kwargs['LOGS']:
+		logConfig = commandContainer.get('logConfiguration')
+		if logConfig is None or logConfig.get('logDriver') != 'awslogs':
+			eprint('[ERROR] Only able to stream logs from containers using the awslogs log driver.')
+			exit(-1)
+
+	overrides = map(
+		get_override,
+		containers
+	)
+
+	result = client.run_task(
+		cluster=kwargs['ECS_CLUSTER'],
+		taskDefinition=kwargs['ECS_TASK_DEF'],
+		overrides={
+			'containerOverrides': overrides
+		},
+		count=kwargs['TASK_COUNT'],
+		startedBy=kwargs['TASK_STARTED_BY']
+	)
+
+	tasks = result.get('tasks', [])
+
+	if len(tasks) == 0:
+		eprint('[ERROR] Error starting task:', result.get('failures', []))
+		exit(-1)
+
+	if kwargs['WAIT'] or kwargs['LOGS']:
+		task_arn = tasks[0].get('taskArn')
+		if logConfig is not None:
+			logOptions = {
+				'logGroupName': logConfig.get('options', {}).get('awslogs-group'),
+				'logStreamNames': [
+					logConfig.get('options', {}).get('awslogs-stream-prefix') + "/" + commandContainer.get('name') + "/" + task_arn.split('/').pop()
+				]
+			}
+		if not kwargs['QUIET']: sys.stderr.write('Running...')
+		result = wait_until_stopped(task_arn, logOptions)
+		if not kwargs['QUIET']: sys.stderr.write('\n')
+
+		exitCode = 0
+		exitReason = None
+		for container in result.get('containers'):
+			if container.get('name') == kwargs['CMD_CONTAINER']:
+				exitCode = container.get('exitCode', -1)
+				exitReason = container.get('reason')
+				break
+
+		if exitCode != 0 and exitReason is not None:
+			eprint('[ERROR]', exitReason)
+
+		exit(exitCode)
+
+if __name__ == '__main__':
+	argh.dispatch_command(run_task)
