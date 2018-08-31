@@ -1,4 +1,4 @@
-# ecs-run
+# ecs-run-cmd
 
 This utility allows you to run an arbitrary command in a container on an ECS cluster. It is similar to the aws-cli command [`aws ecs run-task`](https://docs.aws.amazon.com/cli/latest/reference/ecs/run-task.html) however with a number of benefits:
 
@@ -11,19 +11,19 @@ This utility allows you to run an arbitrary command in a container on an ECS clu
 ## Usage
 
 ```
-usage: ecs-run.py [-h] [--cluster ECS_CLUSTER]
-                  [--task-definition ECS_TASK_DEF] [--region AWS_REGION]
-                  [--profile AWS_PROFILE] [--count TASK_COUNT]
-                  [--started-by TASK_STARTED_BY]
-                  [--cmd-container CMD_CONTAINER]
-                  [--cmd-container-cpu CMD_CONTAINER_CPU]
-                  [--cmd-container-memory-reservation CMD_CONTAINER_MEMORY_RESERVATION]
-                  [--cmd-container-memory-limit CMD_CONTAINER_MEMORY_LIMIT]
-                  [--other-container-cpu OTHER_CONTAINER_CPU]
-                  [--other-container-memory-reservation OTHER_CONTAINER_MEMORY_RESERVATION]
-                  [--other-container-memory-limit OTHER_CONTAINER_MEMORY_LIMIT]
-                  [--wait] [--timeout TIMEOUT] [--logs] [--quiet]
-                  [COMMAND [COMMAND ...]]
+usage: ecs-run-cmd [-h] [--cluster ECS_CLUSTER]
+                   [--task-definition ECS_TASK_DEF] [--region AWS_REGION]
+                   [--profile AWS_PROFILE] [--count TASK_COUNT]
+                   [--started-by TASK_STARTED_BY]
+                   [--cmd-container CMD_CONTAINER]
+                   [--cmd-container-cpu CMD_CONTAINER_CPU]
+                   [--cmd-container-memory-reservation CMD_CONTAINER_MEMORY_RESERVATION]
+                   [--cmd-container-memory-limit CMD_CONTAINER_MEMORY_LIMIT]
+                   [--other-container-cpu OTHER_CONTAINER_CPU]
+                   [--other-container-memory-reservation OTHER_CONTAINER_MEMORY_RESERVATION]
+                   [--other-container-memory-limit OTHER_CONTAINER_MEMORY_LIMIT]
+                   [--wait] [--timeout TIMEOUT] [--logs] [--quiet]
+                   [COMMAND [COMMAND ...]]
 
 Runs an arbitrary command in a container on an ECS cluster. Optionally wait for it to finish and stream log output.
 
