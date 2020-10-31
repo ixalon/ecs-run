@@ -5,7 +5,7 @@ from retrying import retry
 import argh
 import boto3
 import sys
-from pprint import pprint
+
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -168,8 +168,6 @@ def run_task(**kwargs):
         get_override,
         containers
     ))
-
-    
 
     result = client.run_task(
         cluster=kwargs['ECS_CLUSTER'],
