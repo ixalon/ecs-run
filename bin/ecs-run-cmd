@@ -6,10 +6,13 @@ import argh
 import boto3
 import sys
 
+
 def eprint(*args, **kwargs):
-	print(*args, file=sys.stderr, **kwargs)
+    print(*args, file=sys.stderr, **kwargs)
+
 
 def filter(d): return {k: v for k, v in d.iteritems() if v is not None}
+
 
 @argh.arg('--cluster',
           dest='ECS_CLUSTER',
@@ -84,126 +87,134 @@ def filter(d): return {k: v for k, v in d.iteritems() if v is not None}
           nargs='*',
           metavar='COMMAND',
           help='Command to run')
-
 def run_task(**kwargs):
-	"Runs an arbitrary command in a container on an ECS cluster. Optionally wait for it to finish and stream log output."
+    "Runs an arbitrary command in a container on an ECS cluster. Optionally wait for it to finish and stream log output."
 
-	session = boto3.session.Session(profile_name=kwargs['AWS_PROFILE'], region_name=kwargs['AWS_REGION'])
-	client = session.client('ecs')
-	logs = session.client('logs')
+    session = boto3.session.Session(
+        profile_name=kwargs['AWS_PROFILE'], region_name=kwargs['AWS_REGION'])
+    client = session.client('ecs')
+    logs = session.client('logs')
 
-	def retry_if_not_stopped(task):
-		return task.get('lastStatus') != 'STOPPED'
- 
-        @retry(retry_on_result=retry_if_not_stopped, wait_fixed=5000, stop_max_delay=((kwargs['TIMEOUT'] * 1000) or None))
-	def wait_until_stopped(task_arn, logOptions = None):
-		if not kwargs['QUIET']: sys.stderr.write('.')
-		results = client.describe_tasks(
-			cluster = kwargs['ECS_CLUSTER'],
-			tasks = [task_arn]
-		)
-		if logOptions is not None:
-			try:
-				logEntries = logs.filter_log_events(**logOptions)
-				startTime = None
+    def retry_if_not_stopped(task):
+        return task.get('lastStatus') != 'STOPPED'
 
-				for evt in logEntries.get('events', []):
-					print(evt.get('message', ''))
-					startTime = evt.get('timestamp')
+    @retry(retry_on_result=retry_if_not_stopped, wait_fixed=5000, stop_max_delay=((kwargs['TIMEOUT'] * 1000) or None))
+    def wait_until_stopped(task_arn, logOptions=None):
+        if not kwargs['QUIET']:
+            sys.stderr.write('.')
+        results = client.describe_tasks(
+            cluster=kwargs['ECS_CLUSTER'],
+            tasks=[task_arn]
+        )
+        if logOptions is not None:
+            try:
+                logEntries = logs.filter_log_events(**logOptions)
+                startTime = None
 
-				if startTime is not None:
-					logOptions['startTime'] = startTime + 1
-			except:
-				pass
-	
-		return results.get('tasks')[0]
+                for evt in logEntries.get('events', []):
+                    print(evt.get('message', ''))
+                    startTime = evt.get('timestamp')
 
-	def get_override(container):
-		if container.get('name') == kwargs['CMD_CONTAINER']:
-			return filter({
-				'name': container.get('name'),
-				'command': kwargs['COMMAND'],
-				'cpu': kwargs['CMD_CONTAINER_CPU'],
-				'memory': kwargs['CMD_CONTAINER_MEMORY_LIMIT'],
-				'memoryReservation': kwargs['CMD_CONTAINER_MEMORY_RESERVATION']
-			})
-		else:
-			return filter({
-				'name': container.get('name'),
-				'cpu': kwargs['OTHER_CONTAINER_CPU'],
-				'memory': kwargs['OTHER_CONTAINER_MEMORY_LIMIT'],
-				'memoryReservation': kwargs['OTHER_CONTAINER_MEMORY_RESERVATION']
-			})
+                if startTime is not None:
+                    logOptions['startTime'] = startTime + 1
+            except:
+                pass
 
-	taskdef = client.describe_task_definition(
-		taskDefinition = kwargs['ECS_TASK_DEF']
-	)
+        return results.get('tasks')[0]
 
-	containers = taskdef.get('taskDefinition', {}).get('containerDefinitions', [])
+    def get_override(container):
+        if container.get('name') == kwargs['CMD_CONTAINER']:
+            return filter({
+                'name': container.get('name'),
+                'command': kwargs['COMMAND'],
+                'cpu': kwargs['CMD_CONTAINER_CPU'],
+                'memory': kwargs['CMD_CONTAINER_MEMORY_LIMIT'],
+                'memoryReservation': kwargs['CMD_CONTAINER_MEMORY_RESERVATION']
+            })
+        else:
+            return filter({
+                'name': container.get('name'),
+                'cpu': kwargs['OTHER_CONTAINER_CPU'],
+                'memory': kwargs['OTHER_CONTAINER_MEMORY_LIMIT'],
+                'memoryReservation': kwargs['OTHER_CONTAINER_MEMORY_RESERVATION']
+            })
 
-	commandContainer = None
-	for container in containers:
-		if container.get('name') == kwargs['CMD_CONTAINER']:
-			commandContainer = container
-			break
+    taskdef = client.describe_task_definition(
+        taskDefinition=kwargs['ECS_TASK_DEF']
+    )
 
-	if commandContainer is None:
-		eprint('[ERROR] Specified command container not found in task definition')
-		exit(-1)
+    containers = taskdef.get('taskDefinition', {}).get(
+        'containerDefinitions', [])
 
-	logOptions = None
-	if kwargs['LOGS']:
-		logConfig = commandContainer.get('logConfiguration')
-		if logConfig is None or logConfig.get('logDriver') != 'awslogs':
-			eprint('[ERROR] Only able to stream logs from containers using the awslogs log driver.')
-			exit(-1)
+    commandContainer = None
+    for container in containers:
+        if container.get('name') == kwargs['CMD_CONTAINER']:
+            commandContainer = container
+            break
 
-	overrides = map(
-		get_override,
-		containers
-	)
+    if commandContainer is None:
+        eprint('[ERROR] Specified command container not found in task definition')
+        exit(-1)
 
-	result = client.run_task(
-		cluster=kwargs['ECS_CLUSTER'],
-		taskDefinition=kwargs['ECS_TASK_DEF'],
-		overrides={
-			'containerOverrides': overrides
-		},
-		count=kwargs['TASK_COUNT'],
-		startedBy=kwargs['TASK_STARTED_BY']
-	)
+    logOptions = None
+    if kwargs['LOGS']:
+        logConfig = commandContainer.get('logConfiguration')
+        if logConfig is None or logConfig.get('logDriver') != 'awslogs':
+            eprint(
+                '[ERROR] Only able to stream logs from containers using the awslogs log driver.')
+            exit(-1)
 
-	tasks = result.get('tasks', [])
+    overrides = map(
+        get_override,
+        containers
+    )
 
-	if len(tasks) == 0:
-		eprint('[ERROR] Error starting task:', result.get('failures', []))
-		exit(-1)
+    result = client.run_task(
+        cluster=kwargs['ECS_CLUSTER'],
+        taskDefinition=kwargs['ECS_TASK_DEF'],
+        overrides={
+            'containerOverrides': overrides
+        },
+        count=kwargs['TASK_COUNT'],
+        startedBy=kwargs['TASK_STARTED_BY']
+    )
 
-	if kwargs['WAIT'] or kwargs['LOGS']:
-		task_arn = tasks[0].get('taskArn')
-		if logConfig is not None:
-			logOptions = {
-				'logGroupName': logConfig.get('options', {}).get('awslogs-group'),
-				'logStreamNames': [
-					logConfig.get('options', {}).get('awslogs-stream-prefix') + "/" + commandContainer.get('name') + "/" + task_arn.split('/').pop()
-				]
-			}
-		if not kwargs['QUIET']: sys.stderr.write('Running...')
-		result = wait_until_stopped(task_arn, logOptions)
-		if not kwargs['QUIET']: sys.stderr.write('\n')
+    tasks = result.get('tasks', [])
 
-		exitCode = 0
-		exitReason = None
-		for container in result.get('containers'):
-			if container.get('name') == kwargs['CMD_CONTAINER']:
-				exitCode = container.get('exitCode', -1)
-				exitReason = container.get('reason')
-				break
+    if len(tasks) == 0:
+        eprint('[ERROR] Error starting task:', result.get('failures', []))
+        exit(-1)
 
-		if exitCode != 0 and exitReason is not None:
-			eprint('[ERROR]', exitReason)
+    if kwargs['WAIT'] or kwargs['LOGS']:
+        task_arn = tasks[0].get('taskArn')
+        if logConfig is not None:
+            logOptions = {
+                'logGroupName': logConfig.get('options', {}).get('awslogs-group'),
+                'logStreamNames': [
+                    logConfig.get('options', {}).get('awslogs-stream-prefix') + "/" +
+                    commandContainer.get('name') + "/" +
+                    task_arn.split('/').pop()
+                ]
+            }
+        if not kwargs['QUIET']:
+            sys.stderr.write('Running...')
+        result = wait_until_stopped(task_arn, logOptions)
+        if not kwargs['QUIET']:
+            sys.stderr.write('\n')
 
-		exit(exitCode)
+        exitCode = 0
+        exitReason = None
+        for container in result.get('containers'):
+            if container.get('name') == kwargs['CMD_CONTAINER']:
+                exitCode = container.get('exitCode', -1)
+                exitReason = container.get('reason')
+                break
+
+        if exitCode != 0 and exitReason is not None:
+            eprint('[ERROR]', exitReason)
+
+        exit(exitCode)
+
 
 if __name__ == '__main__':
-	argh.dispatch_command(run_task)
+    argh.dispatch_command(run_task)
