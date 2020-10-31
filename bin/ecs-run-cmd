@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from __future__ import print_function
+
 from retrying import retry
 import argh
 import boto3
@@ -11,7 +11,7 @@ def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
 
-def filter(d): return {k: v for k, v in d.iteritems() if v is not None}
+def filter(d): return {k: v for k, v in d.items() if v is not None}
 
 
 @argh.arg('--cluster',
@@ -124,20 +124,20 @@ def run_task(**kwargs):
 
     def get_override(container):
         if container.get('name') == kwargs['CMD_CONTAINER']:
-            return filter({
+            return dict(filter({
                 'name': container.get('name'),
                 'command': kwargs['COMMAND'],
                 'cpu': kwargs['CMD_CONTAINER_CPU'],
                 'memory': kwargs['CMD_CONTAINER_MEMORY_LIMIT'],
                 'memoryReservation': kwargs['CMD_CONTAINER_MEMORY_RESERVATION']
-            })
+            }))
         else:
-            return filter({
+            return dict(filter({
                 'name': container.get('name'),
                 'cpu': kwargs['OTHER_CONTAINER_CPU'],
                 'memory': kwargs['OTHER_CONTAINER_MEMORY_LIMIT'],
                 'memoryReservation': kwargs['OTHER_CONTAINER_MEMORY_RESERVATION']
-            })
+            }))
 
     taskdef = client.describe_task_definition(
         taskDefinition=kwargs['ECS_TASK_DEF']
@@ -164,10 +164,10 @@ def run_task(**kwargs):
                 '[ERROR] Only able to stream logs from containers using the awslogs log driver.')
             exit(-1)
 
-    overrides = map(
+    overrides = list(map(
         get_override,
         containers
-    )
+    ))
 
     result = client.run_task(
         cluster=kwargs['ECS_CLUSTER'],
